@@ -138,3 +138,28 @@ def test_claude_request_shape(monkeypatch):
     assert seen["body"]["fallbacks"] == "default"
     assert "server-side-fallback-2026-07-01" in seen["beta"]
     assert "에코프로비엠, 북미 양극재 수주 확대" in seen["body"]["messages"][0]["content"]
+
+
+def test_listing_falls_back_when_base_info_not_approved(monkeypatch):
+    import requests
+
+    original = requests.Session.get
+
+    def deny_base_info(self, url, **kw):
+        if url.endswith("ksq_isu_base_info"):
+            return fakes.FakeResponse({"respMsg": "Unauthorized API Call"}, status=401)
+        return original(self, url, **kw)
+
+    monkeypatch.setattr(requests.Session, "get", deny_base_info)
+    listing = krx.KrxClient("  k \n").listing()
+    assert {s.code for s in listing} == {"247540", "086520"}
+    assert krx.search_stocks("에코프로비엠", listing)[0].code == "247540"
+
+
+def test_auth_error_names_the_api(monkeypatch):
+    import requests
+
+    monkeypatch.setattr(requests.Session, "get",
+                        lambda self, url, **kw: fakes.FakeResponse({"respMsg": "Unauthorized"}, status=401))
+    with pytest.raises(krx.KrxAuthError, match="코스닥 일별매매정보"):
+        krx.KrxClient("k").listing()

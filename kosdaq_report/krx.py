@@ -26,8 +26,19 @@ EP_BASE_INFO = "sto/ksq_isu_base_info"
 EP_INDEX = "idx/kosdaq_dd_trd"
 
 
+API_NAMES = {
+    EP_DAILY: "코스닥 일별매매정보",
+    EP_BASE_INFO: "코스닥 종목기본정보",
+    EP_INDEX: "KOSDAQ 시리즈 일별시세정보",
+}
+
+
 class KrxError(RuntimeError):
     pass
+
+
+class KrxAuthError(KrxError):
+    """인증키가 틀렸거나 해당 API 이용신청이 승인되지 않은 경우 (HTTP 401/403)."""
 
 
 @dataclass
@@ -54,7 +65,7 @@ class KrxClient:
     def __init__(self, auth_key: str, session: requests.Session | None = None, max_workers: int = 8):
         if not auth_key:
             raise KrxError("KRX API 키가 설정되지 않았습니다.")
-        self.auth_key = auth_key
+        self.auth_key = auth_key.strip()  # 복사·붙여넣기 시 섞여 들어간 공백/줄바꿈 제거
         self.session = session or requests.Session()
         self.max_workers = max_workers
         self.cache = DiskCache("krx")
@@ -68,8 +79,9 @@ class KrxClient:
             timeout=20,
         )
         if resp.status_code in (401, 403):
-            raise KrxError(
-                f"KRX API 인증 실패({resp.status_code}). 인증키 및 '{endpoint}' API 이용신청 승인 여부를 확인하세요."
+            raise KrxAuthError(
+                f"KRX API 인증 실패({resp.status_code}): '{API_NAMES.get(endpoint, endpoint)}' API 를 호출할 권한이 없습니다. "
+                "KRX Open API 사이트에서 인증키가 맞는지, 이 API 의 이용신청이 '승인' 상태인지 확인하세요."
             )
         resp.raise_for_status()
         data = resp.json()
@@ -99,32 +111,50 @@ class KrxClient:
         return dict(zip(days, results))
 
     # ------------------------------------------------------------------ 종목 목록
+    def _latest_rows(self, endpoint: str) -> list[dict]:
+        """오늘부터 거꾸로 최대 10일을 훑어 데이터가 있는 가장 최근 영업일의 응답을 돌려준다."""
+        d = today_kst()
+        for _ in range(10):
+            rows = self.fetch_day(endpoint, d)
+            if rows:
+                return rows
+            d -= timedelta(days=1)
+        raise KrxError(f"최근 10일간 '{API_NAMES.get(endpoint, endpoint)}' 데이터를 받지 못했습니다.")
+
     def listing(self) -> list[StockInfo]:
-        """가장 최근 영업일 기준 코스닥 상장 종목 목록 (하루 캐시)."""
+        """가장 최근 영업일 기준 코스닥 종목 목록 (하루 캐시).
+
+        '종목기본정보' API 를 우선 쓰고, 이용신청이 안 된 경우 '일별매매정보' 응답으로 목록을 만든다.
+        """
         cached = self.cache.get("listing_latest", max_age_hours=24)
         if cached:
             return [StockInfo(**c) for c in cached]
-        d = today_kst()
-        for _ in range(10):
-            rows = self.fetch_day(EP_BASE_INFO, d)
-            if rows:
-                break
-            d -= timedelta(days=1)
-        else:
-            raise KrxError("최근 10일간 코스닥 종목기본정보를 받지 못했습니다.")
-        out = [
-            StockInfo(
-                code=r.get("ISU_SRT_CD") or short_code(r.get("ISU_CD", "")),
-                name=r.get("ISU_ABBRV") or r.get("ISU_NM", ""),
-                std_code=r.get("ISU_CD", ""),
-                sector=r.get("SECT_TP_NM", ""),
-                list_date=r.get("LIST_DD", ""),
-                par_value=to_number(r.get("PARVAL")),
-                listed_shares=to_number(r.get("LIST_SHRS")),
-            )
-            for r in rows
-            if (r.get("KIND_STKCERT_TP_NM") or "보통주") == "보통주"
-        ]
+        try:
+            rows = self._latest_rows(EP_BASE_INFO)
+            out = [
+                StockInfo(
+                    code=r.get("ISU_SRT_CD") or short_code(r.get("ISU_CD", "")),
+                    name=r.get("ISU_ABBRV") or r.get("ISU_NM", ""),
+                    std_code=r.get("ISU_CD", ""),
+                    sector=r.get("SECT_TP_NM", ""),
+                    list_date=r.get("LIST_DD", ""),
+                    par_value=to_number(r.get("PARVAL")),
+                    listed_shares=to_number(r.get("LIST_SHRS")),
+                )
+                for r in rows
+                if (r.get("KIND_STKCERT_TP_NM") or "보통주") == "보통주"
+            ]
+        except KrxAuthError:
+            rows = self._latest_rows(EP_DAILY)
+            out = [
+                StockInfo(
+                    code=short_code(r.get("ISU_CD", "")),
+                    name=r.get("ISU_NM", ""),
+                    sector=r.get("SECT_TP_NM", ""),
+                    listed_shares=to_number(r.get("LIST_SHRS")),
+                )
+                for r in rows
+            ]
         self.cache.set("listing_latest", [o.__dict__ for o in out])
         return out
 

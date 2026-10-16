@@ -33,7 +33,7 @@ class DartClient:
     def __init__(self, api_key: str, session: requests.Session | None = None):
         if not api_key:
             raise DartError("DART API 키가 설정되지 않았습니다.")
-        self.api_key = api_key
+        self.api_key = api_key.strip()
         self.session = session or requests.Session()
         self.cache = DiskCache("dart")
 

@@ -206,7 +206,10 @@ with left:
         ),
         width="stretch",
     )
-    if not kosdaq.empty:
+    if kosdaq.empty:
+        st.caption("코스닥 지수 데이터를 받지 못해 지수 비교는 생략했습니다. "
+                   "KRX Open API 에서 'KOSDAQ 시리즈 일별시세정보' 이용신청 승인 여부를 확인하세요.")
+    else:
         st.markdown("##### 코스닥 지수 대비 상대 성과")
         st.plotly_chart(charts.relative_chart(prices["close"].tail(250), kosdaq, stock.name), width="stretch",
                         config={"displaylogo": False})
