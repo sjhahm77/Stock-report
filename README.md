@@ -16,6 +16,13 @@
 
 ## 실행
 
+### Windows: `run.bat` 더블클릭
+Python 3.10 이상만 설치돼 있으면 됩니다 (설치 시 "Add Python to PATH" 체크).
+처음 실행 때 가상환경 생성 → 패키지 설치 → `.env` 메모장 열기(API 키 입력 후 저장·닫기)를 자동으로 하고,
+이후에는 바로 앱을 띄웁니다. 브라우저에서 http://localhost:8501 이 열리며, 종료는 검은 창을 닫으면 됩니다.
+
+### 직접 실행 (Mac/Linux 포함)
+
 ```bash
 pip install -r requirements.txt
 cp .env.example .env          # 키 입력 (또는 .streamlit/secrets.toml, 또는 앱 사이드바에서 직접 입력)
