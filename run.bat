@@ -8,6 +8,10 @@ echo   코스닥 자동 분석 리포트
 echo ============================================
 echo.
 
+rem ---- 0. ZIP 안에서 바로 실행했는지 확인 (탐색기가 임시 폴더에 이 파일만 꺼내 실행함) ----
+echo "%~dp0" | findstr /i /c:".zip." >nul && goto :inzip
+if not exist "app.py" goto :inzip
+
 rem ---- 1. 파이썬 찾기 (py 런처 우선, 없으면 python) ----
 set "PY="
 py -3 -c "import sys" >nul 2>&1 && set "PY=py -3"
@@ -73,6 +77,12 @@ start "" cmd /c "timeout /t 5 /nobreak >nul & start http://localhost:8501"
 "%VPY%" -m streamlit run app.py --server.port 8501 --server.headless true --browser.gatherUsageStats false
 if errorlevel 1 goto :fail
 goto :eof
+
+:inzip
+echo [안내] ZIP 파일 안에서 바로 실행하셨습니다.
+echo ZIP 파일을 마우스 오른쪽 버튼으로 클릭해 "모두 압축 풀기"를 한 뒤,
+echo 압축이 풀린 폴더에서 run.bat 을 다시 실행하세요.
+goto :fail
 
 :fail
 echo.
