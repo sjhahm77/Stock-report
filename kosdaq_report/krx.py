@@ -106,11 +106,14 @@ class KrxClient:
 
     def _fetch_range(self, endpoint: str, start: date, end: date) -> dict[date, list[dict]]:
         days = business_days(start, end)
+        if not days:
+            return {}
+        # 마지막 날을 먼저 호출해, 인증 오류면 수백 건을 병렬로 보내기 전에 바로 실패시킨다
+        out = {days[-1]: self.fetch_day(endpoint, days[-1])}
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-            results = list(pool.map(lambda d: self.fetch_day(endpoint, d), days))
-        return dict(zip(days, results))
+            out.update(zip(days[:-1], pool.map(lambda d: self.fetch_day(endpoint, d), days[:-1])))
+        return dict(sorted(out.items()))
 
-    # ------------------------------------------------------------------ 종목 목록
     def _latest_rows(self, endpoint: str) -> list[dict]:
         """오늘부터 거꾸로 최대 10일을 훑어 데이터가 있는 가장 최근 영업일의 응답을 돌려준다."""
         d = today_kst()

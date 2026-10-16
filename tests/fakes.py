@@ -170,6 +170,47 @@ def youtube_html() -> str:
     return f"<html><script>var ytInitialData = {json.dumps(data, ensure_ascii=False)};</script></html>"
 
 
+def _datagokr_rows(params) -> list[dict]:
+    """금융위원회 주식/지수 시세 API 응답 행 (KRX 가짜 데이터를 필드명만 바꿔 재사용)."""
+    if "basDt" in params:
+        days = [datetime.strptime(params["basDt"], "%Y%m%d").date()]
+    else:
+        d0 = datetime.strptime(params["beginBasDt"], "%Y%m%d").date()
+        d1 = datetime.strptime(params["endBasDt"], "%Y%m%d").date()  # 미만
+        days = [d0 + timedelta(days=i) for i in range((d1 - d0).days)]
+    rows = []
+    for d in days:
+        bas = d.strftime("%Y%m%d")
+        if "idxNm" in params:
+            for r in krx_index(bas):
+                rows.append({"basDt": bas, "idxNm": r["IDX_NM"], "clpr": r["CLSPRC_IDX"].replace(",", "")})
+            continue
+        for r in krx_daily(bas):
+            if params.get("likeSrtnCd") and params["likeSrtnCd"] not in r["ISU_CD"]:
+                continue
+            rows.append({
+                "basDt": bas, "srtnCd": r["ISU_CD"], "isinCd": f"KR7{r['ISU_CD']}008", "itmsNm": r["ISU_NM"],
+                "mrktCtg": "KOSDAQ", "clpr": r["TDD_CLSPRC"].replace(",", ""), "vs": r["CMPPREVDD_PRC"].replace(",", ""),
+                "fltRt": r["FLUC_RT"], "mkp": r["TDD_OPNPRC"].replace(",", ""), "hipr": r["TDD_HGPRC"].replace(",", ""),
+                "lopr": r["TDD_LWPRC"].replace(",", ""), "trqu": r["ACC_TRDVOL"].replace(",", ""),
+                "trPrc": r["ACC_TRDVAL"].replace(",", ""), "lstgStCnt": r["LIST_SHRS"].replace(",", ""),
+                "mrktTotAmt": r["MKTCAP"].replace(",", ""),
+            })
+    return rows
+
+
+def datagokr_response(params) -> FakeResponse:
+    if params.get("serviceKey") != "dg-key":
+        return FakeResponse(text="<OpenAPI_ServiceResponse><cmmMsgHeader><returnAuthMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR"
+                                 "</returnAuthMsg></cmmMsgHeader></OpenAPI_ServiceResponse>")
+    rows = _datagokr_rows(params)
+    n, page = int(params["numOfRows"]), int(params["pageNo"])
+    chunk = rows[(page - 1) * n: page * n]
+    return FakeResponse({"response": {"header": {"resultCode": "00", "resultMsg": "NORMAL SERVICE."},
+                                      "body": {"numOfRows": n, "pageNo": page, "totalCount": len(rows),
+                                               "items": {"item": chunk}}}})
+
+
 def fake_get(url, params=None, headers=None, timeout=None, **kw):
     params = params or {}
     if "url" in kw:
@@ -196,6 +237,8 @@ def fake_get(url, params=None, headers=None, timeout=None, **kw):
             return FakeResponse(dart_list())
         if path.endswith("document.xml"):
             return FakeResponse(content=dart_document())
+    if "apis.data.go.kr" in url:
+        return datagokr_response(params)
     if "news.google.com" in url:
         return FakeResponse(content=rss())
     if "youtube.com/results" in url:

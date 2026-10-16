@@ -163,3 +163,43 @@ def test_auth_error_names_the_api(monkeypatch):
                         lambda self, url, **kw: fakes.FakeResponse({"respMsg": "Unauthorized"}, status=401))
     with pytest.raises(krx.KrxAuthError, match="코스닥 일별매매정보"):
         krx.KrxClient("k").listing()
+
+
+def test_datagokr_client():
+    from kosdaq_report import datagokr
+
+    c = datagokr.DataGoKrClient("dg%2Dkey")  # Encoding 키(%xx)도 디코딩해서 사용
+    assert c.service_key == "dg-key"
+    listing = c.listing()
+    assert {s.code for s in listing} == {"247540", "086520"}
+    start = today_kst() - timedelta(days=420)
+    df = c.price_history("247540", start)
+    assert len(df) > 250 and df.index.is_monotonic_increasing
+    assert df["market_cap"].iloc[-1] == df["close"].iloc[-1] * 97_801_344
+    assert not c.kosdaq_index(start).empty
+    with pytest.raises(datagokr.DataGoKrAuthError):
+        datagokr.DataGoKrClient("wrong").price_history("247540", start)  # listing 은 캐시돼 있으므로 시세로 확인
+
+
+def test_market_falls_back_to_datagokr_when_krx_unauthorized(monkeypatch):
+    import requests
+
+    from kosdaq_report.market import MarketData
+
+    calls = {"krx": 0}
+    original = requests.Session.get
+
+    def deny_krx(self, url, **kw):
+        if "krx.co.kr" in url:
+            calls["krx"] += 1
+            return fakes.FakeResponse({"respMsg": "Unauthorized API Call"}, status=401)
+        return original(self, url, **kw)
+
+    monkeypatch.setattr(requests.Session, "get", deny_krx)
+    md = MarketData("krx-key", "dg-key")
+    assert {s.code for s in md.listing()} == {"247540", "086520"}
+    assert md.used == "공공데이터포털"
+    before = calls["krx"]
+    df = md.price_history("247540", today_kst() - timedelta(days=200))
+    assert not df.empty and md.used == "공공데이터포털"
+    assert calls["krx"] == before  # 권한 없는 KRX 는 다시 호출하지 않음

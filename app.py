@@ -12,7 +12,8 @@ import streamlit as st
 from kosdaq_report import analysis, charts, summarizer
 from kosdaq_report.config import KEY_NAMES, get_key
 from kosdaq_report.dart import DartClient, DartError, Fundamentals
-from kosdaq_report.krx import KrxClient, KrxError, StockInfo, search_stocks
+from kosdaq_report.krx import StockInfo, search_stocks
+from kosdaq_report.market import MarketData, MarketDataError
 from kosdaq_report.media import MediaBundle, MediaItem, collect_media
 from kosdaq_report.utils import today_kst
 
@@ -41,21 +42,29 @@ def fmt(v, spec: str = ",.2f", suffix: str = "") -> str:
 
 
 # ====================================================================== 캐시된 데이터 로더
+@st.cache_resource(show_spinner=False)
+def market_data(krx_key: str, datagokr_key: str) -> MarketData:
+    """KRX → 공공데이터포털 순서로 시도. 권한 없는 소스는 한 번 실패하면 이후 건너뛴다 (세션 간 공유)."""
+    return MarketData(krx_key, datagokr_key)
+
+
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
-def load_listing(krx_key: str) -> list[StockInfo]:
-    return KrxClient(krx_key).listing()
+def load_listing(krx_key: str, datagokr_key: str) -> tuple[list[StockInfo], str]:
+    md = market_data(krx_key, datagokr_key)
+    return md.listing(), md.used
 
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
-def load_prices(krx_key: str, code: str, days: int) -> tuple[pd.DataFrame, pd.Series]:
-    client = KrxClient(krx_key)
+def load_prices(krx_key: str, datagokr_key: str, code: str, days: int) -> tuple[pd.DataFrame, pd.Series, str]:
+    md = market_data(krx_key, datagokr_key)
     start = today_kst() - timedelta(days=days)
-    df = client.price_history(code, start)
+    df = md.price_history(code, start)
+    source = md.used
     try:
-        idx = client.kosdaq_index(start)
-    except KrxError:
+        idx = md.kosdaq_index(start)
+    except MarketDataError:
         idx = pd.Series(dtype=float)  # 지수 API 미신청 시에도 종목 분석은 계속
-    return df, idx
+    return df, idx, source
 
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
@@ -98,7 +107,7 @@ def llm_disclosure_summary(api_key: str, name: str, items: list[dict], texts: di
 # ====================================================================== 사이드바
 with st.sidebar:
     st.header("⚙️ 설정")
-    with st.expander("API 키", expanded=not (get_key("KRX_API_KEY") and get_key("DART_API_KEY"))):
+    with st.expander("API 키", expanded=not ((get_key("KRX_API_KEY") or get_key("DATA_GO_KR_API_KEY")) and get_key("DART_API_KEY"))):
         keys = {
             k: st.text_input(desc, value=get_key(k), type="password", key=f"key_{k}")
             for k, desc in KEY_NAMES.items()
@@ -128,16 +137,20 @@ if not query:
     st.info("상단에 코스닥 기업명 또는 6자리 종목코드를 입력하고 **분석**을 누르세요.")
     st.stop()
 
-missing = [k for k in ("KRX_API_KEY", "DART_API_KEY") if not keys[k]]
+missing = []
+if not (keys["KRX_API_KEY"] or keys["DATA_GO_KR_API_KEY"]):
+    missing.append("KRX_API_KEY 또는 DATA_GO_KR_API_KEY")
+if not keys["DART_API_KEY"]:
+    missing.append("DART_API_KEY")
 if missing:
     st.error(f"필수 API 키가 없습니다: {', '.join(missing)} — 사이드바에서 입력하세요.")
     st.stop()
 
 try:
     with st.spinner("코스닥 종목 목록 불러오는 중…"):
-        listing = load_listing(keys["KRX_API_KEY"])
+        listing, _ = load_listing(keys["KRX_API_KEY"], keys["DATA_GO_KR_API_KEY"])
 except Exception as e:
-    st.error(f"KRX 종목 목록 조회 실패: {e}")
+    st.error(f"종목 목록 조회 실패: {e}")
     st.stop()
 
 matches = search_stocks(query, listing)
@@ -153,10 +166,12 @@ else:
 
 # ====================================================================== 1. 주가 차트
 try:
-    with st.spinner(f"{stock.name} 시세 불러오는 중… (첫 조회는 일자별 호출로 30초~1분 소요, 이후 캐시)"):
-        prices, kosdaq = load_prices(keys["KRX_API_KEY"], stock.code, PERIODS[period_label])
+    with st.spinner(f"{stock.name} 시세 불러오는 중… (KRX 첫 조회는 30초~1분 소요, 이후 캐시)"):
+        prices, kosdaq, price_source = load_prices(
+            keys["KRX_API_KEY"], keys["DATA_GO_KR_API_KEY"], stock.code, PERIODS[period_label]
+        )
 except Exception as e:
-    st.error(f"KRX 시세 조회 실패: {e}")
+    st.error(f"시세 조회 실패: {e}")
     st.stop()
 if prices.empty:
     st.error("시세 데이터가 없습니다. 거래정지 종목이거나 신규 상장 종목일 수 있습니다.")
@@ -165,7 +180,7 @@ if prices.empty:
 summary = analysis.summarize_price(prices, kosdaq if not kosdaq.empty else None)
 
 st.subheader(f"{stock.name}  ·  {stock.code}")
-st.caption(f"코스닥 {stock.sector or ''} · 기준일 {summary.last_date:%Y-%m-%d} (KRX 종가 기준)")
+st.caption(f"{' '.join(filter(None, ['코스닥', stock.sector]))} · 기준일 {summary.last_date:%Y-%m-%d} (종가 기준 · 출처: {price_source})")
 m = st.columns(5)
 m[0].metric("현재가", f"{summary.close:,.0f}원",
             f"{fmt(summary.change, ',.0f')}원 ({fmt(summary.change_pct, '+.2f')}%)" if summary.change is not None else None,
@@ -208,7 +223,7 @@ with left:
     )
     if kosdaq.empty:
         st.caption("코스닥 지수 데이터를 받지 못해 지수 비교는 생략했습니다. "
-                   "KRX Open API 에서 'KOSDAQ 시리즈 일별시세정보' 이용신청 승인 여부를 확인하세요.")
+                   "KRX 'KOSDAQ 시리즈 일별시세정보' 또는 공공데이터포털 '금융위원회_지수시세정보' 활용신청을 확인하세요.")
     else:
         st.markdown("##### 코스닥 지수 대비 상대 성과")
         st.plotly_chart(charts.relative_chart(prices["close"].tail(250), kosdaq, stock.name), width="stretch",
@@ -375,4 +390,4 @@ else:
                 st.caption("규칙 기반 분류입니다. ANTHROPIC_API_KEY 를 설정하면 공시 원문을 읽고 금액·조건까지 요약합니다.")
 
 st.divider()
-st.caption("본 리포트는 공개 데이터(KRX, DART, 뉴스/유튜브/블로그 검색)를 자동 분석한 참고 자료이며 투자 권유가 아닙니다.")
+st.caption("본 리포트는 공개 데이터(KRX/공공데이터포털, DART, 뉴스/유튜브/블로그 검색)를 자동 분석한 참고 자료이며 투자 권유가 아닙니다.")

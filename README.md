@@ -36,7 +36,8 @@ streamlit run app.py
 
 | 키 | 필수 | 발급처 / 비고 |
 |---|---|---|
-| `KRX_API_KEY` | ✅ | [KRX Open API](https://openapi.krx.co.kr) — 인증키 발급 후 **API별 이용신청**이 필요합니다: `코스닥 일별매매정보`, `코스닥 종목기본정보`, `KOSDAQ 시리즈 일별시세정보` |
+| `KRX_API_KEY` | ✅ (또는 공공데이터포털) | [KRX Open API](https://openapi.krx.co.kr) — 인증키 발급 후 **API별 이용신청**이 필요합니다: `코스닥 일별매매정보`, `코스닥 종목기본정보`, `KOSDAQ 시리즈 일별시세정보` |
+| `DATA_GO_KR_API_KEY` | (KRX 대체) | [공공데이터포털](https://www.data.go.kr) — `금융위원회_주식시세정보`(필수), `금융위원회_지수시세정보`(지수 비교용) 활용신청 후 **일반 인증키(Decoding)** 입력. KRX 키가 없거나 KRX 권한이 없으면 자동으로 이쪽을 사용 |
 | `DART_API_KEY` | ✅ | [DART Open API](https://opendart.fss.or.kr) |
 | `ANTHROPIC_API_KEY` | 선택 | Claude AI 요약 (뉴스·공시). 없으면 규칙/키워드 기반 요약으로 동작 |
 | `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET` | 선택 | [네이버 개발자센터](https://developers.naver.com) 검색 API. 블로그 검색에 필요, 뉴스 품질 향상 |

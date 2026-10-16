@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 
 KEY_NAMES = {
-    "KRX_API_KEY": "KRX Open API 인증키 (필수)",
+    "KRX_API_KEY": "KRX Open API 인증키 (KRX/공공데이터포털 중 하나 필수)",
+    "DATA_GO_KR_API_KEY": "공공데이터포털 인증키 (KRX 대체, Decoding 키)",
     "DART_API_KEY": "DART Open API 인증키 (필수)",
     "ANTHROPIC_API_KEY": "Claude API 키 (선택: AI 요약)",
     "NAVER_CLIENT_ID": "네이버 검색 API Client ID (선택: 뉴스/블로그)",
